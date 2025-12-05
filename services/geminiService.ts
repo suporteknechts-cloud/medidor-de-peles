@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
-import { MeasurementResult } from "../types";
+import { MeasurementResult, LearningReference } from "../types";
 
 // Schema for the expected JSON response from Gemini
 const measurementSchema: Schema = {
@@ -39,7 +39,7 @@ const measurementSchema: Schema = {
   required: ["detectedA4", "detectedLeather", "estimatedAreaSqM", "explanation", "confidenceScore", "leatherVerticesFlat", "a4Outline"]
 };
 
-export const analyzeLeatherImage = async (base64Image: string): Promise<MeasurementResult> => {
+export const analyzeLeatherImage = async (base64Image: string, referenceData?: LearningReference | null): Promise<MeasurementResult> => {
   if (!process.env.API_KEY) {
     throw new Error("Chave de API não configurada (process.env.API_KEY ausente).");
   }
@@ -54,26 +54,49 @@ export const analyzeLeatherImage = async (base64Image: string): Promise<Measurem
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      const response = await ai.models.generateContent({
-        model: "gemini-3-pro-preview", // Using Pro for maximum reasoning capability regarding texture boundaries
-        contents: {
-          parts: [
-            {
-              inlineData: {
-                data: cleanBase64,
-                mimeType: "image/jpeg" 
-              }
-            },
-            {
-              text: `Atue como um Especialista em Visão Computacional de Alta Precisão.
+      // Build the content parts
+      const parts: any[] = [];
+
+      // 1. Add Reference Data (One-Shot Learning) if available
+      if (referenceData) {
+        const cleanRef = referenceData.imageBase64.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, "");
+        parts.push({
+            text: `EXEMPLO DE APRENDIZADO (REFERENCE):
+Esta é uma imagem anterior analisada/corrigida pelo humano.
+Observe o ESTILO DE TRAÇADO humano nesta referência:
+- Veja como o humano entra nas curvas.
+- Veja a densidade de pontos que o humano usou.
+Você deve IMITAR este estilo exato na nova imagem.`
+        });
+        parts.push({
+            inlineData: {
+                data: cleanRef,
+                mimeType: "image/jpeg"
+            }
+        });
+      }
+
+      // 2. Add the Target Image
+      parts.push({ text: "NOVA IMAGEM PARA ANÁLISE (TARGET):" });
+      parts.push({
+        inlineData: {
+          data: cleanBase64,
+          mimeType: "image/jpeg" 
+        }
+      });
+
+      // 3. Add the System Prompt
+      parts.push({
+        text: `Atue como um Especialista em Visão Computacional de Alta Precisão.
 
 TAREFA:
-Realizar a segmentação semântica de uma pele de couro cru.
+Realizar a segmentação semântica de uma pele de couro cru na "NOVA IMAGEM".
 
 ESTRATÉGIA DE MAPEAMENTO (EMBALAGEM A VÁCUO):
 1. LOCALIZAÇÃO: Primeiro, identifique a "Caixa Delimitadora" (Bounding Box) onde a pele está situada. Ignore completamente o resto do chão fora dessa caixa.
 2. TRAÇADO: Gere EXATAMENTE 100 PONTOS de coordenada ao longo da borda da pele.
-   - 100 pontos são suficientes para uma curva suave. Não gere mais que isso para evitar alucinações.
+   - 100 pontos são suficientes para uma curva suave.
+   - Se houver uma "IMAGEM DE REFERÊNCIA" acima, copie o nível de detalhe dela.
 3. TEXTURA: A pele tem textura orgânica/rugosa. O chão é liso/concreto. Use essa diferença para achar a borda exata.
 4. SOMBRAS: Ignore sombras projetadas. A borda é onde a matéria da pele termina.
 
@@ -82,9 +105,11 @@ Normalize tudo para uma grade de 1000x1000.
 
 SAÍDA:
 Retorne 'leatherVerticesFlat' como [x1, y1, x2, y2...].`
-            }
-          ]
-        },
+      });
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3-pro-preview", // Using Pro for maximum reasoning capability regarding texture boundaries
+        contents: { parts: parts },
         config: {
           responseMimeType: "application/json",
           responseSchema: measurementSchema,

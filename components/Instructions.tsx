@@ -9,7 +9,7 @@ export const Instructions: React.FC = () => {
         Instruções para Alta Precisão
       </h2>
       
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <div className="space-y-4">
           <div className="flex items-start gap-3">
             <div className="mt-1 text-blue-600 bg-blue-50 p-1 rounded shrink-0">
@@ -29,7 +29,9 @@ export const Instructions: React.FC = () => {
               <strong>Evite Sombras Fortes:</strong> As sombras podem confundir a IA. Use luz uniforme e difusa sobre a pele.
             </p>
           </div>
+        </div>
 
+        <div className="space-y-4">
           <div className="flex items-start gap-3">
             <div className="mt-1 text-purple-600 bg-purple-50 p-1 rounded shrink-0">
                 <Layers size={18} />
@@ -58,7 +60,7 @@ export const Instructions: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-leather-50 rounded-lg p-4 flex flex-col justify-center items-center text-center border border-leather-100">
+        <div className="bg-leather-50 rounded-lg p-4 flex flex-col justify-center items-center text-center border border-leather-100 lg:col-span-1 md:col-span-2">
            <div className="relative w-full h-32 bg-gray-200 rounded mb-2 flex items-center justify-center overflow-hidden border-2 border-dashed border-gray-300">
              {/* Abstract irregular leather shape representation */}
              <svg viewBox="0 0 200 150" className="w-full h-full text-leather-800 opacity-80 drop-shadow-md">

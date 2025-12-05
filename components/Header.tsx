@@ -9,7 +9,7 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({ onShowHistory, onGoHome }) => {
   return (
     <header className="bg-leather-800 text-white shadow-md sticky top-0 z-50">
-      <div className="max-w-4xl mx-auto px-4 py-4 flex justify-between items-center">
+      <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
         <div 
           className="flex items-center space-x-2 cursor-pointer hover:opacity-90 transition-opacity"
           onClick={onGoHome}

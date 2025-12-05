@@ -1,7 +1,6 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { MeasurementResult } from '../types';
-import { AlertTriangle, Check, RefreshCw, FileText, Eye, EyeOff, Grid3X3, Edit2, RotateCcw, MousePointer2, PenTool, CheckCircle2, ChevronRight, X } from 'lucide-react';
+import { AlertTriangle, Check, RefreshCw, FileText, Eye, EyeOff, Grid3X3, Edit2, RotateCcw, MousePointer2, PenTool, CheckCircle2, ChevronRight, X, ZoomIn, ZoomOut, Move, Maximize } from 'lucide-react';
 
 interface ResultsProps {
   result: MeasurementResult;
@@ -20,14 +19,21 @@ export const Results: React.FC<ResultsProps> = ({ result, onReset, onSave, isSav
   const [manualStep, setManualStep] = useState<'A4' | 'LEATHER' | 'DONE'>(isManualMode ? 'A4' : 'DONE');
   const [a4Points, setA4Points] = useState<{x: number, y: number}[]>([]);
   
-  // EDITING STATE (Used for both AI result editing and Manual Mode drawing)
-  // For manual mode, 'isEditing' effectively means "Drawing" or "Editing" depending on step
+  // EDITING STATE
   const [isEditing, setIsEditing] = useState(isManualMode);
   const [vertices, setVertices] = useState<{x: number, y: number}[]>(result.leatherVertices || []);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [calculatedArea, setCalculatedArea] = useState(result.estimatedAreaSqM);
   
+  // ZOOM & PAN STATE
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isPanMode, setIsPanMode] = useState(false);
+  const [isPanning, setIsPanning] = useState(false);
+  const panStartRef = useRef<{ x: number, y: number }>({ x: 0, y: 0 });
+  
   const svgRef = useRef<SVGSVGElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // Initialize state when result changes (non-manual)
   useEffect(() => {
@@ -37,7 +43,7 @@ export const Results: React.FC<ResultsProps> = ({ result, onReset, onSave, isSav
     }
   }, [result, isManualMode]);
 
-  // SHOELACE FORMULA to calculate polygon area in "Unit Coordinates" (0-1000)
+  // SHOELACE FORMULA
   const getPolygonArea = (points: {x: number, y: number}[]) => {
     let area = 0;
     const n = points.length;
@@ -52,7 +58,6 @@ export const Results: React.FC<ResultsProps> = ({ result, onReset, onSave, isSav
 
   // Recalculate Real Area (m2)
   useEffect(() => {
-    // MANUAL MODE CALCULATION
     if (isManualMode) {
         if (a4Points.length < 3 || vertices.length < 3) {
             setCalculatedArea(0);
@@ -67,7 +72,6 @@ export const Results: React.FC<ResultsProps> = ({ result, onReset, onSave, isSav
             setCalculatedArea(leatherUnitArea * scaleFactor);
         }
     } 
-    // AI MODE RECALCULATION
     else if (result.leatherVertices && result.leatherVertices.length > 0) {
         const originalUnitArea = getPolygonArea(result.leatherVertices);
         const currentUnitArea = getPolygonArea(vertices);
@@ -88,7 +92,6 @@ export const Results: React.FC<ResultsProps> = ({ result, onReset, onSave, isSav
     ) + " Z";
   };
   
-  // Used for A4 Manual Polygon
   const getPolygonPath = (points: {x: number, y: number}[]) => {
       if (points.length === 0) return "";
       let path = points.reduce((acc, p, i) => acc + (i === 0 ? "M " : " L ") + `${p.x} ${p.y}`, "");
@@ -99,7 +102,37 @@ export const Results: React.FC<ResultsProps> = ({ result, onReset, onSave, isSav
   const leatherPathD = getPathFromVertices(vertices);
   const a4PathD = isManualMode ? getPolygonPath(a4Points) : (result.a4Outline || "");
 
-  // MOUSE INTERACTIONS
+  // --- ZOOM & PAN LOGIC ---
+  const handleZoomIn = () => setZoom(prev => Math.min(prev + 0.5, 5));
+  const handleZoomOut = () => setZoom(prev => Math.max(prev - 0.5, 1));
+  const handleResetZoom = () => {
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+  };
+
+  const handleContainerPointerDown = (e: React.PointerEvent) => {
+      if (isPanMode) {
+          setIsPanning(true);
+          panStartRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+          e.currentTarget.setPointerCapture(e.pointerId);
+      }
+  };
+
+  const handleContainerPointerMove = (e: React.PointerEvent) => {
+      if (isPanning && isPanMode) {
+          setPan({
+              x: e.clientX - panStartRef.current.x,
+              y: e.clientY - panStartRef.current.y
+          });
+      }
+  };
+
+  const handleContainerPointerUp = (e: React.PointerEvent) => {
+      setIsPanning(false);
+      e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+
+  // --- SVG INTERACTIONS ---
   const getSvgCoordinates = (e: React.PointerEvent | React.MouseEvent) => {
       if (!svgRef.current) return { x: 0, y: 0 };
       const svgRect = svgRef.current.getBoundingClientRect();
@@ -112,35 +145,36 @@ export const Results: React.FC<ResultsProps> = ({ result, onReset, onSave, isSav
       return { x, y };
   }
 
-  const handleSvgClick = (e: React.MouseEvent) => {
-      // Logic for adding points in manual mode
+  // UPDATED: Using onPointerDown instead of onClick for more robust touch/click handling
+  const handleSvgPointerDown = (e: React.PointerEvent) => {
+      // Ignore clicks if we are panning or in Pan Mode
+      if (isPanMode) return;
+      
       if (!isManualMode || manualStep === 'DONE') return;
+
+      e.preventDefault();
+      e.stopPropagation();
 
       const { x, y } = getSvgCoordinates(e);
 
       if (manualStep === 'A4') {
           if (a4Points.length < 4) {
-              const newPoints = [...a4Points, { x, y }];
-              setA4Points(newPoints);
-              if (newPoints.length === 4) {
-                  // Auto-advance logic could go here, but let's let user confirm visual
-              }
+              setA4Points([...a4Points, { x, y }]);
           }
       } else if (manualStep === 'LEATHER') {
           setVertices([...vertices, { x, y }]);
       }
   };
 
-  const handlePointerDown = (index: number, e: React.PointerEvent) => {
-    // Logic for dragging points (Edit Mode)
-    if (!isEditing || (isManualMode && manualStep !== 'DONE')) return;
+  const handlePointPointerDown = (index: number, e: React.PointerEvent) => {
+    if (!isEditing || isPanMode || (isManualMode && manualStep !== 'DONE')) return;
     
-    e.stopPropagation(); // Prevent triggering svg click
+    e.stopPropagation(); 
     e.currentTarget.setPointerCapture(e.pointerId);
     setDragIndex(index);
   };
 
-  const handlePointerMove = (e: React.PointerEvent) => {
+  const handlePointPointerMove = (e: React.PointerEvent) => {
     if (dragIndex === null || !svgRef.current) return;
     const { x, y } = getSvgCoordinates(e);
     const newVertices = [...vertices];
@@ -148,7 +182,7 @@ export const Results: React.FC<ResultsProps> = ({ result, onReset, onSave, isSav
     setVertices(newVertices);
   };
 
-  const handlePointerUp = (e: React.PointerEvent) => {
+  const handlePointPointerUp = (e: React.PointerEvent) => {
     setDragIndex(null);
     e.currentTarget.releasePointerCapture(e.pointerId);
   };
@@ -158,7 +192,7 @@ export const Results: React.FC<ResultsProps> = ({ result, onReset, onSave, isSav
           ...result,
           estimatedAreaSqM: calculatedArea,
           leatherVertices: vertices,
-          a4Outline: a4PathD, // Save the manual A4 path too
+          a4Outline: a4PathD, 
           isManual: isManualMode
       };
       onSave(editedResult);
@@ -172,9 +206,15 @@ export const Results: React.FC<ResultsProps> = ({ result, onReset, onSave, isSav
       }
   }
 
+  const getCursorStyle = () => {
+      if (isPanMode) return isPanning ? 'cursor-grabbing' : 'cursor-grab';
+      if (isEditing || (isManualMode && manualStep !== 'DONE')) return 'cursor-crosshair';
+      return 'cursor-default';
+  }
+
   return (
     <div className="bg-white rounded-xl shadow-lg border border-leather-200 overflow-hidden animate-fade-in">
-      {/* HEADER / STATUS BAR */}
+      {/* HEADER */}
       <div className={`p-6 text-center text-white transition-colors duration-300 ${isDetectionError ? 'bg-red-600' : isEditing || isManualMode ? 'bg-cyan-700' : 'bg-leather-700'}`}>
         {isDetectionError ? (
            <>
@@ -191,7 +231,7 @@ export const Results: React.FC<ResultsProps> = ({ result, onReset, onSave, isSav
                <span className="text-2xl ml-2 font-normal opacity-70">m²</span>
              </div>
              
-             {/* Manual Mode Instructions */}
+             {/* Manual Instructions */}
              {isManualMode && manualStep === 'A4' && (
                  <p className="text-sm bg-yellow-500/20 text-yellow-100 py-1 px-3 rounded-full inline-block mt-2 font-medium">
                      Passo 1: Clique nos 4 cantos da folha A4 ({a4Points.length}/4)
@@ -220,7 +260,6 @@ export const Results: React.FC<ResultsProps> = ({ result, onReset, onSave, isSav
                     </h3>
                     
                     <div className="flex gap-2">
-                        {/* MANUAL CONTROLS */}
                         {isManualMode && manualStep !== 'DONE' && (
                             <>
                                 <button onClick={undoLastPoint} className="text-xs px-3 py-1.5 rounded bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium">
@@ -239,7 +278,6 @@ export const Results: React.FC<ResultsProps> = ({ result, onReset, onSave, isSav
                             </>
                         )}
 
-                        {/* EDIT MODE CONTROLS (NON-MANUAL) */}
                         {!isManualMode && !isEditing && (
                             <button 
                                 onClick={() => { setIsEditing(true); setShowOverlay(true); }}
@@ -250,7 +288,7 @@ export const Results: React.FC<ResultsProps> = ({ result, onReset, onSave, isSav
                         )}
                         {!isManualMode && isEditing && (
                              <button 
-                                onClick={() => { setVertices(result.leatherVertices || []); setIsEditing(false); }}
+                                onClick={() => { setVertices(result.leatherVertices || []); setIsEditing(false); handleResetZoom(); }}
                                 className="text-xs flex items-center gap-1 text-red-600 bg-red-50 hover:bg-red-100 transition-colors px-3 py-1.5 rounded border border-red-200"
                             >
                                 <RotateCcw size={14}/> Cancelar
@@ -267,94 +305,150 @@ export const Results: React.FC<ResultsProps> = ({ result, onReset, onSave, isSav
                     </div>
                 </div>
                 
-                {/* EDITOR CANVAS */}
-                <div className="relative w-full rounded-lg overflow-hidden border border-gray-200 bg-gray-100 group touch-none select-none">
-                    <img 
-                        src={imageBase64} 
-                        alt="Analyzed Leather" 
-                        className="w-full h-auto block select-none pointer-events-none"
-                    />
-                    
-                    {showOverlay && (
-                        <svg 
-                            ref={svgRef}
-                            viewBox="0 0 1000 1000" 
-                            preserveAspectRatio="none"
-                            className={`absolute top-0 left-0 w-full h-full ${(isEditing || (isManualMode && manualStep !== 'DONE')) ? 'cursor-crosshair' : 'pointer-events-none'}`}
-                            style={{ zIndex: 10 }}
-                            onClick={handleSvgClick}
-                            onPointerMove={(isEditing || manualStep === 'DONE') ? handlePointerMove : undefined}
-                            onPointerUp={(isEditing || manualStep === 'DONE') ? handlePointerUp : undefined}
-                            onPointerLeave={(isEditing || manualStep === 'DONE') ? handlePointerUp : undefined}
+                {/* EDITOR CANVAS WRAPPER */}
+                <div 
+                    ref={containerRef}
+                    className={`relative w-full rounded-lg overflow-hidden border border-gray-200 bg-gray-100 group touch-none select-none h-[500px] lg:h-[650px] flex items-center justify-center`}
+                    onPointerDown={handleContainerPointerDown}
+                    onPointerMove={handleContainerPointerMove}
+                    onPointerUp={handleContainerPointerUp}
+                    onPointerLeave={handleContainerPointerUp}
+                >
+                    {/* ZOOM CONTROLS (Floating) */}
+                    {(isEditing || isManualMode) && (
+                        <div 
+                            className="absolute top-4 right-4 flex flex-col gap-2 bg-white/90 backdrop-blur border border-gray-200 p-1.5 rounded-lg shadow-sm z-20"
+                            onPointerDown={(e) => e.stopPropagation()}
                         >
-                            <defs>
-                                <pattern id="leatherTexture" x="0" y="0" width="60" height="60" patternUnits="userSpaceOnUse" patternTransform="rotate(15)">
-                                    <rect width="60" height="60" fill="rgba(6, 182, 212, 0.05)" />
-                                    <path d="M10 10 Q 20 5 30 15" fill="none" stroke="rgba(6, 182, 212, 0.3)" strokeWidth="0.5" strokeLinecap="round" />
-                                    <path d="M40 30 Q 35 40 45 50" fill="none" stroke="rgba(6, 182, 212, 0.2)" strokeWidth="0.5" strokeLinecap="round" />
-                                </pattern>
-                            </defs>
-
-                            {/* --- LEATHER LAYER --- */}
-                            {leatherPathD && (
-                                <path 
-                                    d={leatherPathD} 
-                                    fill={isEditing ? "rgba(6, 182, 212, 0.2)" : "url(#leatherTexture)"}
-                                    stroke={isEditing ? "#0891b2" : "#00e5ff"}
-                                    strokeWidth={isEditing ? "2" : "1.5"}
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    vectorEffect="non-scaling-stroke"
-                                    className="drop-shadow-sm transition-colors"
-                                />
-                            )}
-                             {vertices.map((p, i) => (
-                                <circle 
-                                    key={`v-${i}`} 
-                                    cx={p.x} 
-                                    cy={p.y} 
-                                    r={isEditing ? (dragIndex === i ? 15 : 6) : 1.5}
-                                    fill={isEditing ? (dragIndex === i ? "#ffffff" : "#06b6d4") : "#00e5ff"}
-                                    stroke={isEditing ? "#0891b2" : "none"}
-                                    strokeWidth={isEditing ? 2 : 0}
-                                    vectorEffect="non-scaling-stroke"
-                                    className={isEditing && (manualStep === 'DONE' || !isManualMode) ? "cursor-move" : ""}
-                                    style={{ pointerEvents: (isEditing || manualStep === 'DONE') ? 'auto' : 'none' }}
-                                    onPointerDown={(e) => handlePointerDown(i, e)}
-                                />
-                            ))}
-
-                            {/* --- A4 LAYER --- */}
-                            {a4PathD && (
-                                <path 
-                                    d={a4PathD} 
-                                    fill="rgba(255, 255, 0, 0.15)" 
-                                    stroke="#ffff00" 
-                                    strokeWidth="2" 
-                                    vectorEffect="non-scaling-stroke"
-                                    className="drop-shadow-lg pointer-events-none"
-                                />
-                            )}
-                            {isManualMode && a4Points.map((p, i) => (
-                                <circle key={`a4-${i}`} cx={p.x} cy={p.y} r={8} fill="#ffff00" stroke="#000" strokeWidth={1} vectorEffect="non-scaling-stroke"/>
-                            ))}
-
-                        </svg>
-                    )}
-                    
-                    {/* HELPERS */}
-                    {isManualMode && manualStep === 'A4' && (
-                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-black/70 text-white px-4 py-2 rounded pointer-events-none text-center">
-                            <Grid3X3 className="mx-auto mb-1 text-yellow-400"/>
-                            Clique nos 4 cantos da folha A4
+                            <button 
+                                onClick={handleZoomIn} 
+                                className="p-1.5 hover:bg-gray-100 rounded text-gray-700" 
+                                title="Zoom In"
+                            >
+                                <ZoomIn size={18} />
+                            </button>
+                            <button 
+                                onClick={handleZoomOut} 
+                                className="p-1.5 hover:bg-gray-100 rounded text-gray-700" 
+                                title="Zoom Out"
+                            >
+                                <ZoomOut size={18} />
+                            </button>
+                            <div className="h-px bg-gray-200 my-0.5"></div>
+                            <button 
+                                onClick={() => setIsPanMode(!isPanMode)} 
+                                className={`p-1.5 rounded transition-colors ${isPanMode ? 'bg-cyan-100 text-cyan-700' : 'hover:bg-gray-100 text-gray-700'}`} 
+                                title={isPanMode ? "Modo Arrastar (Ativado)" : "Ativar Modo Arrastar"}
+                            >
+                                <Move size={18} />
+                            </button>
+                            <button 
+                                onClick={handleResetZoom} 
+                                className="p-1.5 hover:bg-gray-100 rounded text-gray-700" 
+                                title="Resetar Visualização"
+                            >
+                                <Maximize size={18} />
+                            </button>
                         </div>
                     )}
-                    
+
+                    {/* TRANSFORMABLE CONTENT */}
+                    <div 
+                        style={{ 
+                            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                            transformOrigin: 'center center',
+                            transition: isPanning ? 'none' : 'transform 0.1s ease-out'
+                        }}
+                        className={`relative shadow-2xl ${getCursorStyle()}`}
+                    >
+                        {/* UPDATED: Responsive fixed height image to avoid collapse inside flex container and match larger desktop height */}
+                        <img 
+                            src={imageBase64} 
+                            alt="Analyzed Leather" 
+                            className="w-auto object-contain select-none pointer-events-none block h-[480px] lg:h-[630px]"
+                            style={{ maxWidth: 'none' }} 
+                        />
+                        
+                        {showOverlay && (
+                            <svg 
+                                ref={svgRef}
+                                viewBox="0 0 1000 1000" 
+                                preserveAspectRatio="none"
+                                className="absolute top-0 left-0 w-full h-full"
+                                style={{ zIndex: 10 }}
+                                onPointerDown={handleSvgPointerDown}
+                                onPointerMove={(!isPanMode && (isEditing || manualStep === 'DONE')) ? handlePointPointerMove : undefined}
+                                onPointerUp={(!isPanMode && (isEditing || manualStep === 'DONE')) ? handlePointPointerUp : undefined}
+                                onPointerLeave={(!isPanMode && (isEditing || manualStep === 'DONE')) ? handlePointPointerUp : undefined}
+                            >
+                                <defs>
+                                    <pattern id="leatherTexture" x="0" y="0" width="60" height="60" patternUnits="userSpaceOnUse" patternTransform="rotate(15)">
+                                        <rect width="60" height="60" fill="rgba(6, 182, 212, 0.05)" />
+                                        <path d="M10 10 Q 20 5 30 15" fill="none" stroke="rgba(6, 182, 212, 0.3)" strokeWidth="0.5" strokeLinecap="round" />
+                                        <path d="M40 30 Q 35 40 45 50" fill="none" stroke="rgba(6, 182, 212, 0.2)" strokeWidth="0.5" strokeLinecap="round" />
+                                    </pattern>
+                                </defs>
+
+                                {/* LEATHER LAYER */}
+                                {leatherPathD && (
+                                    <path 
+                                        d={leatherPathD} 
+                                        fill={isEditing ? "rgba(6, 182, 212, 0.2)" : "url(#leatherTexture)"}
+                                        stroke={isEditing ? "#0891b2" : "#00e5ff"}
+                                        strokeWidth={isEditing ? (2 / zoom) : (1.5 / zoom)} // Adjust stroke based on zoom
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        vectorEffect="non-scaling-stroke"
+                                        className="drop-shadow-sm transition-colors"
+                                    />
+                                )}
+                                {vertices.map((p, i) => (
+                                    <circle 
+                                        key={`v-${i}`} 
+                                        cx={p.x} 
+                                        cy={p.y} 
+                                        r={isEditing ? (dragIndex === i ? (15 / zoom) : (6 / zoom)) : (1.5 / zoom)}
+                                        fill={isEditing ? (dragIndex === i ? "#ffffff" : "#06b6d4") : "#00e5ff"}
+                                        stroke={isEditing ? "#0891b2" : "none"}
+                                        strokeWidth={isEditing ? (2 / zoom) : 0}
+                                        className={(!isPanMode && isEditing && (manualStep === 'DONE' || !isManualMode)) ? "cursor-move" : ""}
+                                        style={{ pointerEvents: (!isPanMode && (isEditing || manualStep === 'DONE')) ? 'auto' : 'none' }}
+                                        onPointerDown={(e) => handlePointPointerDown(i, e)}
+                                    />
+                                ))}
+
+                                {/* A4 LAYER */}
+                                {a4PathD && (
+                                    <path 
+                                        d={a4PathD} 
+                                        fill="rgba(255, 255, 0, 0.15)" 
+                                        stroke="#ffff00" 
+                                        strokeWidth={2 / zoom} 
+                                        vectorEffect="non-scaling-stroke"
+                                        className="drop-shadow-lg pointer-events-none"
+                                    />
+                                )}
+                                {isManualMode && a4Points.map((p, i) => (
+                                    <circle key={`a4-${i}`} cx={p.x} cy={p.y} r={8 / zoom} fill="#ffff00" stroke="#000" strokeWidth={1 / zoom} vectorEffect="non-scaling-stroke"/>
+                                ))}
+
+                            </svg>
+                        )}
+                        
+                        {/* HELPERS */}
+                        {isManualMode && manualStep === 'A4' && (
+                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-black/70 text-white px-4 py-2 rounded pointer-events-none text-center" style={{ transform: `scale(${1/zoom})` }}>
+                                <Grid3X3 className="mx-auto mb-1 text-yellow-400"/>
+                                Clique nos 4 cantos da folha A4
+                            </div>
+                        )}
+                        
+                    </div>
                 </div>
             </div>
         )}
 
-        {/* DETAILS PANEL */}
+        {/* DETAILS AND ACTIONS ... (Same as before) */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
           <div className="bg-gray-50 p-4 rounded-lg border border-gray-100">
             <h3 className="text-sm font-semibold text-gray-500 uppercase mb-3">Dados da Medição</h3>
@@ -380,7 +474,6 @@ export const Results: React.FC<ResultsProps> = ({ result, onReset, onSave, isSav
           </div>
         </div>
 
-        {/* ACTION BUTTONS */}
         <div className="flex flex-col sm:flex-row gap-3 justify-center">
             <button
                 onClick={onReset}
@@ -395,7 +488,8 @@ export const Results: React.FC<ResultsProps> = ({ result, onReset, onSave, isSav
                 <button
                     onClick={() => {
                         if (isEditing) {
-                            setIsEditing(false); // Always exit edit mode first
+                            setIsEditing(false);
+                            handleResetZoom();
                         } else {
                             handleSaveWrapper();
                         }

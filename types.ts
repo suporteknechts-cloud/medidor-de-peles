@@ -17,6 +17,11 @@ export interface MeasurementRecord extends MeasurementResult {
   imageName: string;
 }
 
+export interface LearningReference {
+  imageBase64: string; // Small thumbnail (e.g. 400px) to save tokens
+  vertices: {x: number, y: number}[];
+}
+
 export enum AppState {
   IDLE = 'IDLE',
   ANALYZING = 'ANALYZING',
